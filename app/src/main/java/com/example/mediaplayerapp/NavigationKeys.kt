@@ -11,5 +11,6 @@ data class PlayerKey(
     val uriString: String,
     val title: String,
     val artistOrSubtitle: String,
-    val isVideo: Boolean
+    val isVideo: Boolean,
+    val playlistUris: String = "" // Comma-separated list of media URIs for sequential playback
 ) : NavKey

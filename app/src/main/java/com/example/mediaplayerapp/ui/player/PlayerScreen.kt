@@ -56,13 +56,22 @@ fun PlayerScreen(
     title: String,
     artistOrSubtitle: String,
     isVideo: Boolean,
+    playlistUris: String = "",
     onBackClick: () -> Unit
 ) {
     val context = LocalContext.current
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {
-            val mediaItem = ExoMediaItem.fromUri(Uri.parse(uriString))
-            setMediaItem(mediaItem)
+            if (playlistUris.isNotEmpty()) {
+                val uris = playlistUris.split(",")
+                uris.forEach { uriVal ->
+                    if (uriVal.trim().isNotEmpty()) {
+                        addMediaItem(ExoMediaItem.fromUri(Uri.parse(uriVal.trim())))
+                    }
+                }
+            } else {
+                addMediaItem(ExoMediaItem.fromUri(Uri.parse(uriString)))
+            }
             prepare()
             playWhenReady = true
         }
@@ -125,7 +134,9 @@ fun PlayerScreen(
         }
     }
 
-    // Keep track of playback status
+    var currentTrackTitle by remember { mutableStateOf(title) }
+
+    // Keep track of playback status and media changes
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlayingChanged: Boolean) {
@@ -134,6 +145,19 @@ fun PlayerScreen(
 
             override fun onPlaybackStateChanged(state: Int) {
                 totalDuration = exoPlayer.duration.coerceAtLeast(0L)
+            }
+
+            override fun onMediaItemTransition(mediaItem: ExoMediaItem?, reason: Int) {
+                super.onMediaItemTransition(mediaItem, reason)
+                if (mediaItem != null) {
+                    val uriStringVal = mediaItem.localConfiguration?.uri?.toString() ?: ""
+                    // Try to fetch filename from Uri if title is unavailable or default
+                    val file = java.io.File(uriStringVal)
+                    currentTrackTitle = file.name.substringBeforeLast(".")
+                    if (currentTrackTitle.isEmpty() || currentTrackTitle.startsWith("http")) {
+                        currentTrackTitle = mediaItem.mediaMetadata.title?.toString() ?: title
+                    }
+                }
             }
         }
         exoPlayer.addListener(listener)
@@ -250,7 +274,7 @@ fun PlayerScreen(
                         Spacer(modifier = Modifier.height(24.dp))
 
                         Text(
-                            text = title,
+                            text = currentTrackTitle,
                             color = Color.White,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
@@ -295,7 +319,7 @@ fun PlayerScreen(
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
-                                text = title,
+                                text = currentTrackTitle,
                                 color = Color.White,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,

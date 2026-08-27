@@ -65,6 +65,7 @@ class MainScreenViewModel(private val dataRepository: DataRepository) : ViewMode
 
     fun loadStorageItems(context: Context) {
         viewModelScope.launch {
+            _storageMedia.value = dataRepository.getMediaItemsFromStorage(context)
             _videoFolders.value = dataRepository.getMediaFolders(context, MediaType.VIDEO)
             _audioFolders.value = dataRepository.getMediaFolders(context, MediaType.AUDIO)
         }

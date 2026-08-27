@@ -29,6 +29,7 @@ fun MainNavigation() {
             title = key.title,
             artistOrSubtitle = key.artistOrSubtitle,
             isVideo = key.isVideo,
+            playlistUris = key.playlistUris,
             onBackClick = { backStack.removeLastOrNull() }
           )
         }
