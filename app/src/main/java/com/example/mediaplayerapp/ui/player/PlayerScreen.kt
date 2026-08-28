@@ -16,6 +16,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -40,6 +41,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.common.Player
@@ -60,6 +62,11 @@ fun PlayerScreen(
     onBackClick: () -> Unit
 ) {
     val context = LocalContext.current
+    val sharedPrefs = remember { context.getSharedPreferences("media_player_recents", Context.MODE_PRIVATE) }
+    val savedPosition = remember(uriString) {
+        sharedPrefs.getLong("pos_${uriString}", 0L)
+    }
+
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {
             if (playlistUris.isNotEmpty()) {
@@ -73,6 +80,9 @@ fun PlayerScreen(
                 addMediaItem(ExoMediaItem.fromUri(Uri.parse(uriString)))
             }
             prepare()
+            if (savedPosition > 0L) {
+                seekTo(savedPosition)
+            }
             playWhenReady = true
         }
     }
@@ -126,6 +136,18 @@ fun PlayerScreen(
         }
     }
 
+    // Keep screen on during video playback
+    DisposableEffect(isPlaying) {
+        if (isVideo && isPlaying && activity != null) {
+            activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            if (isVideo && activity != null) {
+                activity.window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+    }
+
     // Reset orientation on screen exit
     DisposableEffect(Unit) {
         onDispose {
@@ -135,6 +157,17 @@ fun PlayerScreen(
     }
 
     var currentTrackTitle by remember { mutableStateOf(title) }
+
+    // Helper to save playback position and update recents list in SharedPreferences
+    fun saveProgress(pos: Long, dur: Long) {
+        if (pos > 1000L && (dur == 0L || pos < dur - 2000L)) {
+            // Save position if not at the very end
+            sharedPrefs.edit().putLong("pos_${uriString}", pos).apply()
+        } else if (dur > 0L && pos >= dur - 2000L) {
+            // If near end, reset to 0
+            sharedPrefs.edit().remove("pos_${uriString}").apply()
+        }
+    }
 
     // Keep track of playback status and media changes
     DisposableEffect(exoPlayer) {
@@ -151,7 +184,6 @@ fun PlayerScreen(
                 super.onMediaItemTransition(mediaItem, reason)
                 if (mediaItem != null) {
                     val uriStringVal = mediaItem.localConfiguration?.uri?.toString() ?: ""
-                    // Try to fetch filename from Uri if title is unavailable or default
                     val file = java.io.File(uriStringVal)
                     currentTrackTitle = file.name.substringBeforeLast(".")
                     if (currentTrackTitle.isEmpty() || currentTrackTitle.startsWith("http")) {
@@ -162,16 +194,18 @@ fun PlayerScreen(
         }
         exoPlayer.addListener(listener)
         onDispose {
+            saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0L))
             exoPlayer.removeListener(listener)
             exoPlayer.release()
         }
     }
 
-    // Monitor progress
+    // Monitor progress and periodically persist position
     LaunchedEffect(isPlaying) {
         while (isPlaying) {
             currentPosition = exoPlayer.currentPosition
             totalDuration = exoPlayer.duration.coerceAtLeast(0L)
+            saveProgress(currentPosition, totalDuration)
             delay(1000)
         }
     }
@@ -278,12 +312,17 @@ fun PlayerScreen(
                             color = Color.White,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 24.dp)
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 24.dp).basicMarquee()
                         )
                         Text(
                             text = artistOrSubtitle,
                             color = Color.White.copy(alpha = 0.7f),
-                            fontSize = 14.sp
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(horizontal = 24.dp).basicMarquee()
                         )
                     }
                 }
@@ -317,13 +356,15 @@ fun PlayerScreen(
                     }
                     if (isVideo) {
                         Spacer(modifier = Modifier.width(12.dp))
-                        Column {
+                        Column(modifier = Modifier.widthIn(max = 200.dp)) {
                             Text(
                                 text = currentTrackTitle,
                                 color = Color.White,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold,
-                                maxLines = 1
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.basicMarquee()
                             )
                         }
                     }
@@ -383,7 +424,7 @@ fun PlayerScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Control panel buttons (shrunk)
+                    // Control panel buttons
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly,
@@ -410,6 +451,26 @@ fun PlayerScreen(
                             )
                         }
 
+                        // Previous track button (SkipPrevious)
+                        IconButton(
+                            onClick = {
+                                if (exoPlayer.hasPreviousMediaItem()) {
+                                    exoPlayer.seekToPreviousMediaItem()
+                                } else {
+                                    exoPlayer.seekTo(0L)
+                                    currentPosition = 0L
+                                }
+                            },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SkipPrevious,
+                                contentDescription = "Previous Track",
+                                tint = Color.White,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+
                         // Seek backward 10 seconds
                         IconButton(
                             onClick = {
@@ -427,7 +488,7 @@ fun PlayerScreen(
                             )
                         }
 
-                        // Play/Pause button with custom rounded frame (shrunk)
+                        // Play/Pause button with custom rounded frame
                         Box(
                             modifier = Modifier
                                 .size(48.dp)
@@ -464,6 +525,23 @@ fun PlayerScreen(
                                 contentDescription = "Fast forward 10s",
                                 tint = Color.White,
                                 modifier = Modifier.size(24.dp)
+                            )
+                        }
+
+                        // Next track button (SkipNext)
+                        IconButton(
+                            onClick = {
+                                if (exoPlayer.hasNextMediaItem()) {
+                                    exoPlayer.seekToNextMediaItem()
+                                }
+                            },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SkipNext,
+                                contentDescription = "Next Track",
+                                tint = Color.White,
+                                modifier = Modifier.size(26.dp)
                             )
                         }
 

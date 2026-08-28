@@ -1,8 +1,11 @@
 package com.example.mediaplayerapp.ui.main
 
+import android.content.Context
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -14,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
@@ -87,6 +91,69 @@ fun MainScreen(
     val audioFolders by viewModel.audioFolders.collectAsStateWithLifecycle()
     val folderContents by viewModel.folderContents.collectAsStateWithLifecycle()
 
+    val recentsSharedPrefs = remember { context.getSharedPreferences("media_player_recents", Context.MODE_PRIVATE) }
+
+    fun loadRecentMedia(): List<MediaItem> {
+        val list = mutableListOf<MediaItem>()
+        val dataStr = recentsSharedPrefs.getString("recent_media_list", null) ?: return list
+        try {
+            val jsonArr = org.json.JSONArray(dataStr)
+            for (i in 0 until jsonArr.length()) {
+                val itemObj = jsonArr.getJSONObject(i)
+                val id = itemObj.getLong("id")
+                val title = itemObj.getString("title")
+                val artist = itemObj.getString("artist")
+                val uriStr = itemObj.getString("uri")
+                val duration = itemObj.getLong("duration")
+                val size = itemObj.getLong("size")
+                val type = MediaType.valueOf(itemObj.getString("type"))
+                list.add(MediaItem(id, title, artist, Uri.parse(uriStr), duration, size, type))
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return list
+    }
+
+    fun saveRecentMedia(item: MediaItem) {
+        try {
+            val currentList = loadRecentMedia().toMutableList()
+            currentList.removeAll { it.uri.toString() == item.uri.toString() }
+            currentList.add(0, item)
+            val trimmed = currentList.take(20)
+            val jsonArr = org.json.JSONArray()
+            trimmed.forEach { itm ->
+                val itemObj = org.json.JSONObject()
+                itemObj.put("id", itm.id)
+                itemObj.put("title", itm.title)
+                itemObj.put("artist", itm.artistOrSubtitle)
+                itemObj.put("uri", itm.uri.toString())
+                itemObj.put("duration", itm.duration)
+                itemObj.put("size", itm.size)
+                itemObj.put("type", itm.type.name)
+                jsonArr.put(itemObj)
+            }
+            recentsSharedPrefs.edit().putString("recent_media_list", jsonArr.toString()).apply()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    var recentMediaItems by remember(storageItems) { mutableStateOf(loadRecentMedia()) }
+
+    fun playMediaWithRecent(item: MediaItem) {
+        saveRecentMedia(item)
+        recentMediaItems = loadRecentMedia()
+        onItemClick(
+            PlayerKey(
+                uriString = item.uri.toString(),
+                title = item.title,
+                artistOrSubtitle = item.artistOrSubtitle,
+                isVideo = item.type == MediaType.VIDEO
+            )
+        )
+    }
+
     var searchQuery by remember { mutableStateOf("") }
     var isSearchActive by remember { mutableStateOf(false) }
 
@@ -98,7 +165,7 @@ fun MainScreen(
                         TextField(
                             value = searchQuery,
                             onValueChange = { searchQuery = it },
-                            placeholder = { Text("بحث عن صوت أو فيديو...") },
+                            placeholder = { Text("بحث...") },
                             singleLine = true,
                             colors = TextFieldDefaults.colors(
                                 focusedContainerColor = Color.Transparent,
@@ -212,16 +279,7 @@ fun MainScreen(
 
                 MediaList(
                     items = searchResults,
-                    onPlay = { item ->
-                        onItemClick(
-                            PlayerKey(
-                                uriString = item.uri.toString(),
-                                title = item.title,
-                                artistOrSubtitle = item.artistOrSubtitle,
-                                isVideo = item.type == MediaType.VIDEO
-                            )
-                        )
-                    }
+                    onPlay = { item -> playMediaWithRecent(item) }
                 )
             } else {
                 // Storage Info & Quick Filter Chips
@@ -267,12 +325,17 @@ fun MainScreen(
                                 }
                             )
                         } else if (activeVideoFolder == null) {
-                            // RECENT / ALL VIDEOS Horizontal Grid layout on top
-                            val allVideos = remember(videoFolders, folderContents) {
-                                folderContents.filter { it.type == MediaType.VIDEO }
+                            // RECENT VIDEOS loaded persistently from SharedPreferences (or fallback to storageItems)
+                            val recentVideos = remember(recentMediaItems, storageItems) {
+                                val recentsOnlyVideos = recentMediaItems.filter { it.type == MediaType.VIDEO }
+                                if (recentsOnlyVideos.isNotEmpty()) {
+                                    recentsOnlyVideos
+                                } else {
+                                    storageItems.filter { it.type == MediaType.VIDEO }.take(5)
+                                }
                             }
 
-                            if (allVideos.isNotEmpty()) {
+                            if (recentVideos.isNotEmpty()) {
                                 Text(
                                     text = "RECENT VIDEOS",
                                     fontSize = 12.sp,
@@ -285,10 +348,12 @@ fun MainScreen(
                                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                                     modifier = Modifier.fillMaxWidth().height(130.dp)
                                 ) {
-                                    items(allVideos.take(5)) { videoItem ->
-                                        RecentVideoCard(item = videoItem, onPlay = {
-                                            onItemClick(PlayerKey(videoItem.uri.toString(), videoItem.title, videoItem.artistOrSubtitle, true))
-                                        })
+                                    items(recentVideos.take(10)) { videoItem ->
+                                        RecentVideoCard(
+                                            item = videoItem,
+                                            sharedPrefs = recentsSharedPrefs,
+                                            onPlay = { playMediaWithRecent(videoItem) }
+                                        )
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(12.dp))
@@ -334,9 +399,7 @@ fun MainScreen(
                             }
                             MediaList(
                                 items = filteredContents,
-                                onPlay = { item ->
-                                    onItemClick(PlayerKey(item.uri.toString(), item.title, item.artistOrSubtitle, true))
-                                }
+                                onPlay = { item -> playMediaWithRecent(item) }
                             )
                         }
                     }
@@ -367,9 +430,7 @@ fun MainScreen(
                             }
                             MediaList(
                                 items = filteredContents,
-                                onPlay = { item ->
-                                    onItemClick(PlayerKey(item.uri.toString(), item.title, item.artistOrSubtitle, false))
-                                }
+                                onPlay = { item -> playMediaWithRecent(item) }
                             )
                         }
                     }
@@ -377,10 +438,109 @@ fun MainScreen(
                         var isCreateDialogOpen by remember { mutableStateOf(false) }
                         var newPlaylistName by remember { mutableStateOf("") }
                         
-                        // Local state to store user playlists (In-memory mock database for fast operation)
-                        var userPlaylists by remember { mutableStateOf(mutableListOf<Pair<String, List<MediaItem>>>()) }
+                        // Load and save user playlists to SharedPreferences
+                        val sharedPrefs = remember { context.getSharedPreferences("media_player_playlists", Context.MODE_PRIVATE) }
+                        
+                        // Parse playlists from JSON string stored in SharedPreferences
+                        fun savePlaylistsToPrefs(playlists: List<Pair<String, List<MediaItem>>>) {
+                            try {
+                                val jsonArr = org.json.JSONArray()
+                                playlists.forEach { (name, items) ->
+                                    val playlistObj = org.json.JSONObject()
+                                    playlistObj.put("name", name)
+                                    val itemsArr = org.json.JSONArray()
+                                    items.forEach { item ->
+                                        val itemObj = org.json.JSONObject()
+                                        itemObj.put("id", item.id)
+                                        itemObj.put("title", item.title)
+                                        itemObj.put("artist", item.artistOrSubtitle)
+                                        itemObj.put("uri", item.uri.toString())
+                                        itemObj.put("duration", item.duration)
+                                        itemObj.put("size", item.size)
+                                        itemObj.put("type", item.type.name)
+                                        itemsArr.put(itemObj)
+                                    }
+                                    playlistObj.put("items", itemsArr)
+                                    jsonArr.put(playlistObj)
+                                }
+                                sharedPrefs.edit().putString("playlists_data", jsonArr.toString()).apply()
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+
+                        fun loadPlaylistsFromPrefs(allMedia: List<MediaItem>): MutableList<Pair<String, List<MediaItem>>> {
+                            val list = mutableListOf<Pair<String, List<MediaItem>>>()
+                            val dataStr = sharedPrefs.getString("playlists_data", null) ?: return list
+                            try {
+                                val jsonArr = org.json.JSONArray(dataStr)
+                                for (i in 0 until jsonArr.length()) {
+                                    val playlistObj = jsonArr.getJSONObject(i)
+                                    val name = playlistObj.getString("name")
+                                    val itemsArr = playlistObj.getJSONArray("items")
+                                    val itemsList = mutableListOf<MediaItem>()
+                                    for (j in 0 until itemsArr.length()) {
+                                        val itemObj = itemsArr.getJSONObject(j)
+                                        val id = itemObj.getLong("id")
+                                        val title = itemObj.getString("title")
+                                        val artist = itemObj.getString("artist")
+                                        val uriStr = itemObj.getString("uri")
+                                        val duration = itemObj.getLong("duration")
+                                        val size = itemObj.getLong("size")
+                                        val type = MediaType.valueOf(itemObj.getString("type"))
+                                        
+                                        // Match from storageItems or reconstruct
+                                        val matched = allMedia.find { it.uri.toString() == uriStr }
+                                        if (matched != null) {
+                                            itemsList.add(matched)
+                                        } else {
+                                            itemsList.add(
+                                                MediaItem(id, title, artist, Uri.parse(uriStr), duration, size, type)
+                                            )
+                                        }
+                                    }
+                                    list.add(Pair(name, itemsList))
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                            return list
+                        }
+
+                        // Natural Episode-aware sorting helper
+                        // Sorts by detected episode number or series/season numbers naturally (e.g. Ep 1, Ep 2, Ep 10 instead of Ep 1, Ep 10, Ep 2)
+                        fun sortMediaByEpisodes(items: List<MediaItem>): List<MediaItem> {
+                            val regexNumber = "\\d+".toRegex()
+                            return items.sortedWith(Comparator { a, b ->
+                                val titleA = a.title
+                                val titleB = b.title
+
+                                // Extract all numbers from both titles to compare episode sequences
+                                val numbersA = regexNumber.findAll(titleA).map { it.value.toLongOrNull() ?: 0L }.toList()
+                                val numbersB = regexNumber.findAll(titleB).map { it.value.toLongOrNull() ?: 0L }.toList()
+
+                                if (numbersA.isNotEmpty() && numbersB.isNotEmpty()) {
+                                    // Compare the common sequence prefix or the first differing number
+                                    val minLen = minOf(numbersA.size, numbersB.size)
+                                    for (i in 0 until minLen) {
+                                        val cmp = numbersA[i].compareTo(numbersB[i])
+                                        if (cmp != 0) return@Comparator cmp
+                                    }
+                                    if (numbersA.size != numbersB.size) {
+                                        return@Comparator numbersA.size.compareTo(numbersB.size)
+                                    }
+                                }
+                                titleA.compareTo(titleB, ignoreCase = true)
+                            })
+                        }
+
+                        // Local state to store user playlists
+                        var userPlaylists by remember(storageItems) { 
+                            mutableStateOf(loadPlaylistsFromPrefs(storageItems)) 
+                        }
                         var activePlaylistIndex by remember { mutableStateOf<Int?>(null) }
                         var isAddMediaDialogOpen by remember { mutableStateOf(false) }
+                        var isAddFolderDialogOpen by remember { mutableStateOf(false) }
 
                         if (activePlaylistIndex == null) {
                             Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
@@ -443,6 +603,7 @@ fun MainScreen(
                                                             val updated = userPlaylists.toMutableList()
                                                             updated.removeAt(index)
                                                             userPlaylists = updated
+                                                            savePlaylistsToPrefs(updated)
                                                         }) {
                                                             Icon(Icons.Default.Close, contentDescription = "Delete", tint = Color.Red)
                                                         }
@@ -462,12 +623,31 @@ fun MainScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    IconButton(onClick = { activePlaylistIndex = null }) {
-                                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        IconButton(onClick = { activePlaylistIndex = null }) {
+                                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                                        }
+                                        Text(currentPlaylist.first, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                                     }
-                                    Text(currentPlaylist.first, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                                    Button(onClick = { isAddMediaDialogOpen = true }) {
-                                        Text("إضافة ملفات +")
+                                    Row {
+                                        // Sort by Episode/Track order button
+                                        IconButton(onClick = {
+                                            val sortedList = sortMediaByEpisodes(currentPlaylist.second)
+                                            val updatedPlaylists = userPlaylists.toMutableList()
+                                            updatedPlaylists[activePlaylistIndex!!] = Pair(currentPlaylist.first, sortedList)
+                                            userPlaylists = updatedPlaylists
+                                            savePlaylistsToPrefs(updatedPlaylists)
+                                        }) {
+                                            Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = "ترتيب حسب الحلقات", tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                        // Add entire folder button
+                                        IconButton(onClick = { isAddFolderDialogOpen = true }) {
+                                            Icon(Icons.Default.Folder, contentDescription = "إضافة مجلد كامل", tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                        // Add individual media files button
+                                        IconButton(onClick = { isAddMediaDialogOpen = true }) {
+                                            Icon(Icons.Default.Add, contentDescription = "إضافة ملفات", tint = MaterialTheme.colorScheme.primary)
+                                        }
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(16.dp))
@@ -492,7 +672,14 @@ fun MainScreen(
                                                     verticalAlignment = Alignment.CenterVertically
                                                 ) {
                                                     Column(modifier = Modifier.weight(1f)) {
-                                                        Text(item.title, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                                        Text(
+                                                            item.title,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            maxLines = 1,
+                                                            fontSize = 13.sp,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            modifier = Modifier.basicMarquee()
+                                                        )
                                                         Text(item.artistOrSubtitle, fontSize = 11.sp, color = Color.Gray)
                                                     }
                                                     IconButton(onClick = {
@@ -501,6 +688,7 @@ fun MainScreen(
                                                         updatedList.remove(item)
                                                         updatedPlaylists[activePlaylistIndex!!] = Pair(currentPlaylist.first, updatedList)
                                                         userPlaylists = updatedPlaylists
+                                                        savePlaylistsToPrefs(updatedPlaylists)
                                                     }) {
                                                         Icon(Icons.Default.Close, contentDescription = "Remove", tint = Color.Gray)
                                                     }
@@ -551,6 +739,7 @@ fun MainScreen(
                                             val updated = userPlaylists.toMutableList()
                                             updated.add(Pair(newPlaylistName.trim(), emptyList()))
                                             userPlaylists = updated
+                                            savePlaylistsToPrefs(updated)
                                             newPlaylistName = ""
                                             isCreateDialogOpen = false
                                         }
@@ -566,41 +755,148 @@ fun MainScreen(
                             )
                         }
 
-                        // Dialog to add media files to the current playlist
+                        // Dialog to add entire folders to the playlist
+                        if (isAddFolderDialogOpen && activePlaylistIndex != null) {
+                            val allFolders = remember(videoFolders, audioFolders) {
+                                (videoFolders + audioFolders).distinctBy { it.path }
+                            }
+                            AlertDialog(
+                                onDismissRequest = { isAddFolderDialogOpen = false },
+                                title = { Text("اختر مجلداً لإضافته كاملاً") },
+                                text = {
+                                    if (allFolders.isEmpty()) {
+                                        Box(modifier = Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
+                                            Text("لا توجد مجلدات متاحة", color = Color.Gray)
+                                        }
+                                    } else {
+                                        LazyColumn(
+                                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                                            modifier = Modifier.height(300.dp).fillMaxWidth()
+                                        ) {
+                                            items(allFolders) { folder ->
+                                                Card(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clickable {
+                                                            // Fetch media from that folder
+                                                            val folderMedia = (
+                                                                DefaultDataRepository().getMediaItemsInFolder(context, folder.path, MediaType.VIDEO) +
+                                                                DefaultDataRepository().getMediaItemsInFolder(context, folder.path, MediaType.AUDIO)
+                                                            ).distinctBy { it.uri.toString() }
+
+                                                            // Sort naturally by episode
+                                                            val sortedFolderMedia = sortMediaByEpisodes(folderMedia)
+
+                                                            val updatedPlaylists = userPlaylists.toMutableList()
+                                                            val targetPlaylist = updatedPlaylists[activePlaylistIndex!!]
+                                                            val currentList = targetPlaylist.second.toMutableList()
+
+                                                            sortedFolderMedia.forEach { item ->
+                                                                if (!currentList.any { it.uri.toString() == item.uri.toString() }) {
+                                                                    currentList.add(item)
+                                                                }
+                                                            }
+
+                                                            // Re-sort the whole playlist naturally by episodes
+                                                            val finalSorted = sortMediaByEpisodes(currentList)
+                                                            updatedPlaylists[activePlaylistIndex!!] = Pair(targetPlaylist.first, finalSorted)
+                                                            userPlaylists = updatedPlaylists
+                                                            savePlaylistsToPrefs(updatedPlaylists)
+                                                            isAddFolderDialogOpen = false
+                                                        },
+                                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp))
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Folder,
+                                                            contentDescription = "Folder",
+                                                            tint = MaterialTheme.colorScheme.primary
+                                                        )
+                                                        Spacer(modifier = Modifier.width(12.dp))
+                                                        Column(modifier = Modifier.weight(1f)) {
+                                                            Text(folder.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                                            Text("${folder.mediaCount} ملفات", fontSize = 11.sp, color = Color.Gray)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                confirmButton = {
+                                    Button(onClick = { isAddFolderDialogOpen = false }) {
+                                        Text("إلغاء")
+                                    }
+                                }
+                            )
+                        }
+
+                        // Dialog to add individual media files to the current playlist
                         if (isAddMediaDialogOpen && activePlaylistIndex != null) {
                             val allStorageMedia = remember(storageItems) { storageItems }
+                            var dialogSearchQuery by remember { mutableStateOf("") }
+                            val filteredDialogMedia = remember(dialogSearchQuery, allStorageMedia) {
+                                if (dialogSearchQuery.trim().isEmpty()) {
+                                    allStorageMedia
+                                } else {
+                                    allStorageMedia.filter {
+                                        it.title.contains(dialogSearchQuery, ignoreCase = true) ||
+                                        it.artistOrSubtitle.contains(dialogSearchQuery, ignoreCase = true)
+                                    }
+                                }
+                            }
                             AlertDialog(
                                 onDismissRequest = { isAddMediaDialogOpen = false },
                                 title = { Text("اختر ملفات لإضافتها") },
                                 text = {
-                                    LazyColumn(
-                                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                                        modifier = Modifier.height(300.dp).fillMaxWidth()
-                                    ) {
-                                        items(allStorageMedia) { item ->
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .clickable {
-                                                        val updatedPlaylists = userPlaylists.toMutableList()
-                                                        val targetPlaylist = updatedPlaylists[activePlaylistIndex!!]
-                                                        val currentList = targetPlaylist.second.toMutableList()
-                                                        if (!currentList.contains(item)) {
-                                                            currentList.add(item)
-                                                            updatedPlaylists[activePlaylistIndex!!] = Pair(targetPlaylist.first, currentList)
-                                                            userPlaylists = updatedPlaylists
+                                    Column {
+                                        OutlinedTextField(
+                                            value = dialogSearchQuery,
+                                            onValueChange = { dialogSearchQuery = it },
+                                            placeholder = { Text("بحث عن ملف...") },
+                                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                            singleLine = true
+                                        )
+                                        LazyColumn(
+                                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                                            modifier = Modifier.height(300.dp).fillMaxWidth()
+                                        ) {
+                                            items(filteredDialogMedia) { item ->
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clickable {
+                                                            val updatedPlaylists = userPlaylists.toMutableList()
+                                                            val targetPlaylist = updatedPlaylists[activePlaylistIndex!!]
+                                                            val currentList = targetPlaylist.second.toMutableList()
+                                                            if (!currentList.contains(item)) {
+                                                                currentList.add(item)
+                                                                val sorted = sortMediaByEpisodes(currentList)
+                                                                updatedPlaylists[activePlaylistIndex!!] = Pair(targetPlaylist.first, sorted)
+                                                                userPlaylists = updatedPlaylists
+                                                                savePlaylistsToPrefs(updatedPlaylists)
+                                                            }
                                                         }
-                                                    }
-                                                    .padding(8.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Icon(
-                                                    imageVector = if (item.type == MediaType.VIDEO) Icons.Default.Videocam else Icons.Default.MusicNote,
-                                                    contentDescription = null,
-                                                    tint = Color.Gray
-                                                )
-                                                Spacer(modifier = Modifier.width(12.dp))
-                                                Text(item.title, maxLines = 1, modifier = Modifier.weight(1f))
+                                                        .padding(8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Icon(
+                                                        imageVector = if (item.type == MediaType.VIDEO) Icons.Default.Videocam else Icons.Default.MusicNote,
+                                                        contentDescription = null,
+                                                        tint = Color.Gray
+                                                    )
+                                                    Spacer(modifier = Modifier.width(12.dp))
+                                                    Text(
+                                                        item.title,
+                                                        maxLines = 1,
+                                                        fontSize = 13.sp,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        modifier = Modifier.weight(1f).basicMarquee()
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -715,7 +1011,15 @@ fun FolderCard(folder: FolderItem, onClick: () -> Unit) {
 }
 
 @Composable
-fun RecentVideoCard(item: MediaItem, onPlay: () -> Unit) {
+fun RecentVideoCard(
+    item: MediaItem,
+    sharedPrefs: android.content.SharedPreferences? = null,
+    onPlay: () -> Unit
+) {
+    val savedPos = remember(item.uri) {
+        sharedPrefs?.getLong("pos_${item.uri}", 0L) ?: 0L
+    }
+
     Card(
         modifier = Modifier
             .width(160.dp)
@@ -740,7 +1044,7 @@ fun RecentVideoCard(item: MediaItem, onPlay: () -> Unit) {
                 )
             }
 
-            // Duration badge at bottom right
+            // Duration or progress badge at bottom right
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -749,10 +1053,22 @@ fun RecentVideoCard(item: MediaItem, onPlay: () -> Unit) {
                     .padding(horizontal = 6.dp, vertical = 2.dp)
             ) {
                 Text(
-                    text = formatDuration(item.duration),
-                    color = Color.White,
-                    fontSize = 10.sp,
+                    text = if (savedPos > 0L) "${formatDuration(savedPos)} / ${formatDuration(item.duration)}" else formatDuration(item.duration),
+                    color = if (savedPos > 0L) MaterialTheme.colorScheme.primary else Color.White,
+                    fontSize = 9.sp,
                     fontWeight = FontWeight.Bold
+                )
+            }
+
+            // Playback progress line at very bottom if resumed
+            if (savedPos > 0L && item.duration > 0L) {
+                val progressFraction = (savedPos.toFloat() / item.duration.toFloat()).coerceIn(0f, 1f)
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth(progressFraction)
+                        .height(3.dp)
+                        .background(MaterialTheme.colorScheme.primary)
                 )
             }
 
@@ -760,8 +1076,8 @@ fun RecentVideoCard(item: MediaItem, onPlay: () -> Unit) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(6.dp)
-                    .width(100.dp)
+                    .padding(start = 6.dp, bottom = if (savedPos > 0L) 6.dp else 4.dp, end = 6.dp)
+                    .width(90.dp)
             ) {
                 Text(
                     text = item.title,
@@ -832,13 +1148,18 @@ fun MediaCard(item: MediaItem, onClick: () -> Unit) {
                 Text(
                     text = item.title,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
+                    fontSize = 13.sp,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.basicMarquee(),
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     text = item.artistOrSubtitle,
-                    fontSize = 13.sp,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.basicMarquee(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
