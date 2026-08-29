@@ -10,12 +10,24 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 
+data class MediaDetails(
+    val title: String,
+    val pathOrUri: String,
+    val sizeFormatted: String,
+    val durationFormatted: String,
+    val mimeTypeOrFormat: String,
+    val resolution: String? = null
+)
+
 interface DataRepository {
     val mediaItems: Flow<List<MediaItem>>
     fun getSampleStreams(): List<MediaItem>
     fun getMediaItemsFromStorage(context: Context): List<MediaItem>
     fun getMediaFolders(context: Context, type: MediaType): List<FolderItem>
     fun getMediaItemsInFolder(context: Context, folderPath: String, type: MediaType): List<MediaItem>
+    fun deleteMedia(context: Context, item: MediaItem): Boolean = false
+    fun renameMedia(context: Context, item: MediaItem, newName: String): Boolean = false
+    fun getMediaDetails(context: Context, item: MediaItem): MediaDetails? = null
 }
 
 class DefaultDataRepository : DataRepository {
@@ -247,5 +259,136 @@ class DefaultDataRepository : DataRepository {
             }
         }
         return list
+    }
+
+    override fun deleteMedia(context: Context, item: MediaItem): Boolean {
+        return try {
+            if (item.uri.scheme == "content") {
+                val rows = context.contentResolver.delete(item.uri, null, null)
+                rows > 0
+            } else if (item.uri.scheme == "file" || item.uri.path != null) {
+                val file = java.io.File(item.uri.path ?: "")
+                if (file.exists()) file.delete() else false
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    override fun renameMedia(context: Context, item: MediaItem, newName: String): Boolean {
+        return try {
+            if (item.uri.scheme == "content") {
+                val values = android.content.ContentValues().apply {
+                    if (item.type == MediaType.VIDEO) {
+                        put(MediaStore.Video.Media.TITLE, newName)
+                        put(MediaStore.Video.Media.DISPLAY_NAME, newName)
+                    } else {
+                        put(MediaStore.Audio.Media.TITLE, newName)
+                        put(MediaStore.Audio.Media.DISPLAY_NAME, newName)
+                    }
+                }
+                val rows = context.contentResolver.update(item.uri, values, null, null)
+                rows > 0
+            } else if (item.uri.scheme == "file" || item.uri.path != null) {
+                val file = java.io.File(item.uri.path ?: "")
+                if (file.exists()) {
+                    val newFile = java.io.File(file.parentFile, newName)
+                    file.renameTo(newFile)
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    override fun getMediaDetails(context: Context, item: MediaItem): MediaDetails {
+        var formattedSize = formatFileSize(item.size)
+        var path = item.uri.toString()
+        var mimeType = if (item.type == MediaType.VIDEO) "video/*" else "audio/*"
+        var resolution: String? = null
+
+        try {
+            if (item.uri.scheme == "content") {
+                val projection = arrayOf(
+                    MediaStore.MediaColumns.DATA,
+                    MediaStore.MediaColumns.MIME_TYPE,
+                    MediaStore.MediaColumns.SIZE
+                )
+                context.contentResolver.query(item.uri, projection, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val dataIdx = cursor.getColumnIndex(MediaStore.MediaColumns.DATA)
+                        val mimeIdx = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
+                        val sizeIdx = cursor.getColumnIndex(MediaStore.MediaColumns.SIZE)
+
+                        if (dataIdx != -1) cursor.getString(dataIdx)?.let { path = it }
+                        if (mimeIdx != -1) cursor.getString(mimeIdx)?.let { mimeType = it }
+                        if (sizeIdx != -1) {
+                            val s = cursor.getLong(sizeIdx)
+                            if (s > 0) formattedSize = formatFileSize(s)
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        try {
+            val retriever = android.media.MediaMetadataRetriever()
+            if (item.uri.scheme == "content" || item.uri.scheme == "android.resource") {
+                retriever.setDataSource(context, item.uri)
+            } else if (item.uri.scheme == "http" || item.uri.scheme == "https") {
+                retriever.setDataSource(item.uri.toString(), HashMap())
+            } else {
+                retriever.setDataSource(item.uri.path ?: item.uri.toString())
+            }
+
+            if (item.type == MediaType.VIDEO) {
+                val width = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                val height = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                if (!width.isNullOrEmpty() && !height.isNullOrEmpty()) {
+                    resolution = "${width} x ${height}"
+                }
+            }
+            val mime = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_MIMETYPE)
+            if (!mime.isNullOrEmpty()) mimeType = mime
+            retriever.release()
+        } catch (_: Exception) {}
+
+        val durationFormatted = formatDuration(item.duration)
+
+        return MediaDetails(
+            title = item.title,
+            pathOrUri = path,
+            sizeFormatted = formattedSize,
+            durationFormatted = durationFormatted,
+            mimeTypeOrFormat = mimeType,
+            resolution = resolution
+        )
+    }
+}
+
+fun formatFileSize(bytes: Long): String {
+    if (bytes <= 0) return "0 B"
+    val units = arrayOf("B", "KB", "MB", "GB", "TB")
+    val digitGroups = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt().coerceIn(0, units.size - 1)
+    return String.format("%.2f %s", bytes / Math.pow(1024.0, digitGroups.toDouble()), units[digitGroups])
+}
+
+fun formatDuration(durationMs: Long): String {
+    if (durationMs <= 0) return "00:00"
+    val seconds = (durationMs / 1000) % 60
+    val minutes = (durationMs / (1000 * 60)) % 60
+    val hours = durationMs / (1000 * 60 * 60)
+    return if (hours > 0) {
+        String.format("%02d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format("%02d:%02d", minutes, seconds)
     }
 }

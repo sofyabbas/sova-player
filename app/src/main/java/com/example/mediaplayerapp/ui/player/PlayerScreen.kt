@@ -49,7 +49,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.example.mediaplayerapp.service.PlayerManager
-import com.example.mediaplayerapp.ui.main.formatDuration
+import com.example.mediaplayerapp.data.formatDuration
 import kotlinx.coroutines.delay
 
 @OptIn(UnstableApi::class)

@@ -77,6 +77,24 @@ class MainScreenViewModel(private val dataRepository: DataRepository) : ViewMode
         }
     }
 
+    fun deleteMedia(context: Context, item: MediaItem, onComplete: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val success = dataRepository.deleteMedia(context, item)
+            loadStorageItems(context)
+            onComplete(success)
+        }
+    }
+
+    fun renameMedia(context: Context, item: MediaItem, newName: String, onComplete: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val success = dataRepository.renameMedia(context, item, newName)
+            loadStorageItems(context)
+            onComplete(success)
+        }
+    }
+
+    fun getMediaDetails(context: Context, item: MediaItem) = dataRepository.getMediaDetails(context, item)
+
     fun getRequiredPermissions(): Array<String> {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             arrayOf(
