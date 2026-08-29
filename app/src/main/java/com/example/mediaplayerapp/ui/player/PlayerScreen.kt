@@ -373,14 +373,31 @@ fun PlayerScreen(
                                 ViewGroup.LayoutParams.MATCH_PARENT,
                                 ViewGroup.LayoutParams.MATCH_PARENT
                             )
+                            val transparentCaptionStyle = CaptionStyleCompat(
+                                android.graphics.Color.WHITE,
+                                android.graphics.Color.TRANSPARENT,
+                                android.graphics.Color.TRANSPARENT,
+                                CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                                android.graphics.Color.BLACK,
+                                null
+                            )
                             subtitleView?.apply {
-                                setUserDefaultStyle()
+                                setStyle(transparentCaptionStyle)
                                 setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * subtitleFontScale)
                             }
                         }
                     },
                     update = { playerView ->
+                        val transparentCaptionStyle = CaptionStyleCompat(
+                            android.graphics.Color.WHITE,
+                            android.graphics.Color.TRANSPARENT,
+                            android.graphics.Color.TRANSPARENT,
+                            CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+                            android.graphics.Color.BLACK,
+                            null
+                        )
                         playerView.subtitleView?.apply {
+                            setStyle(transparentCaptionStyle)
                             setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * subtitleFontScale)
                         }
                     },
