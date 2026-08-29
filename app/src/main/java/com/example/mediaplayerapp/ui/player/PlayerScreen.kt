@@ -48,6 +48,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import com.example.mediaplayerapp.service.PlayerManager
 import com.example.mediaplayerapp.ui.main.formatDuration
 import kotlinx.coroutines.delay
 
@@ -68,22 +69,47 @@ fun PlayerScreen(
     }
 
     val exoPlayer = remember {
-        ExoPlayer.Builder(context).build().apply {
+        PlayerManager.getPlayer(context).apply {
+            clearMediaItems()
             if (playlistUris.isNotEmpty()) {
                 val uris = playlistUris.split(",")
                 uris.forEach { uriVal ->
-                    if (uriVal.trim().isNotEmpty()) {
-                        addMediaItem(ExoMediaItem.fromUri(Uri.parse(uriVal.trim())))
+                    val cleanUri = uriVal.trim()
+                    if (cleanUri.isNotEmpty()) {
+                        val file = java.io.File(cleanUri)
+                        val itemTitle = file.name.substringBeforeLast(".")
+                        val item = ExoMediaItem.Builder()
+                            .setUri(Uri.parse(cleanUri))
+                            .setMediaMetadata(
+                                androidx.media3.common.MediaMetadata.Builder()
+                                    .setTitle(if (itemTitle.isNotEmpty() && !itemTitle.startsWith("http")) itemTitle else title)
+                                    .setArtist(artistOrSubtitle)
+                                    .build()
+                            )
+                            .build()
+                        addMediaItem(item)
                     }
                 }
             } else {
-                addMediaItem(ExoMediaItem.fromUri(Uri.parse(uriString)))
+                val file = java.io.File(uriString)
+                val itemTitle = file.name.substringBeforeLast(".")
+                val item = ExoMediaItem.Builder()
+                    .setUri(Uri.parse(uriString))
+                    .setMediaMetadata(
+                        androidx.media3.common.MediaMetadata.Builder()
+                            .setTitle(if (itemTitle.isNotEmpty() && !itemTitle.startsWith("http")) itemTitle else title)
+                            .setArtist(artistOrSubtitle)
+                            .build()
+                    )
+                    .build()
+                addMediaItem(item)
             }
             prepare()
             if (savedPosition > 0L) {
                 seekTo(savedPosition)
             }
             playWhenReady = true
+            PlayerManager.startService(context)
         }
     }
 
@@ -196,7 +222,6 @@ fun PlayerScreen(
         onDispose {
             saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0L))
             exoPlayer.removeListener(listener)
-            exoPlayer.release()
         }
     }
 
@@ -344,7 +369,12 @@ fun PlayerScreen(
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     IconButton(
-                        onClick = onBackClick,
+                        onClick = {
+                            saveProgress(exoPlayer.currentPosition, exoPlayer.duration.coerceAtLeast(0L))
+                            exoPlayer.pause()
+                            PlayerManager.release()
+                            onBackClick()
+                        },
                         modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
