@@ -23,5 +23,10 @@ class MainScreenViewModelTest {
 }
 
 private class FakeMyModelRepository : DataRepository {
-  override val data: Flow<List<String>> = flow { emit(listOf("Sample")) }
+  override val mediaItems: Flow<List<com.example.mediaplayerapp.data.MediaItem>> = flow { emit(emptyList()) }
+  override fun getSampleStreams(): List<com.example.mediaplayerapp.data.MediaItem> = emptyList()
+  override fun getMediaItemsFromStorage(context: android.content.Context): List<com.example.mediaplayerapp.data.MediaItem> = emptyList()
+  override fun getMediaFolders(context: android.content.Context, type: com.example.mediaplayerapp.data.MediaType): List<com.example.mediaplayerapp.data.FolderItem> = emptyList()
+  override fun getMediaItemsInFolder(context: android.content.Context, folderPath: String, type: com.example.mediaplayerapp.data.MediaType): List<com.example.mediaplayerapp.data.MediaItem> = emptyList()
 }
+
