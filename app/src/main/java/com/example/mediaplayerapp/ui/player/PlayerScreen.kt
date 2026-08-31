@@ -95,9 +95,15 @@ fun PlayerScreen(
 
             if (playlistUris.isNotEmpty()) {
                 val uris = playlistUris.split(",")
+                var startIndex = 0
+                var foundIndex = 0
                 uris.forEach { uriVal ->
                     val cleanUri = uriVal.trim()
                     if (cleanUri.isNotEmpty()) {
+                        if (cleanUri == uriString) {
+                            startIndex = foundIndex
+                        }
+                        foundIndex++
                         val file = File(cleanUri)
                         val itemTitle = file.name.substringBeforeLast(".")
                         val subs = if (cleanUri == uriString && isVideo) initialSubs else emptyList()
@@ -110,6 +116,12 @@ fun PlayerScreen(
                         addMediaItem(item)
                     }
                 }
+                prepare()
+                if (savedPosition > 0L) {
+                    seekTo(startIndex, savedPosition)
+                } else {
+                    seekTo(startIndex, 0L)
+                }
             } else {
                 val file = File(uriString)
                 val itemTitle = file.name.substringBeforeLast(".")
@@ -120,10 +132,10 @@ fun PlayerScreen(
                     initialSubs
                 )
                 addMediaItem(item)
-            }
-            prepare()
-            if (savedPosition > 0L) {
-                seekTo(savedPosition)
+                prepare()
+                if (savedPosition > 0L) {
+                    seekTo(savedPosition)
+                }
             }
             playWhenReady = true
             PlayerManager.startService(context)
@@ -137,6 +149,12 @@ fun PlayerScreen(
     var isFullscreen by remember { mutableStateOf(false) }
     var areControlsVisible by remember { mutableStateOf(true) }
     var currentTrackTitle by remember { mutableStateOf(title) }
+
+    LaunchedEffect(isPlaying) {
+        if (isPlaying) {
+            PlayerManager.startService(context)
+        }
+    }
 
     val activity = remember(context) {
         var ctx = context

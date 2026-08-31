@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">sova player</string>
+    <string name="media_playback_channel_name">تشغيل الوسائط</string>
+    <string name="media_playback_channel_desc">إشعارات تشغيل الصوت والفيديو والتحكم بالوسائط في الخلفية</string>
 </resources>
